@@ -7,6 +7,14 @@ require 'thread'
 require "net/http"
 require "uri"
 
+configure do
+  # logging is enabled by default in classic style applications,
+  # so `enable :logging` is not needed
+  file = File.new("#{settings.root}/log/#{settings.environment}.log", 'a+')
+  file.sync = true
+  use Rack::CommonLogger, file
+end
+
 $job_flag = false
 $job_array = Array.new()
 $sum = 0
@@ -16,27 +24,41 @@ Thread.new do
   	if $job_flag == true
       puts 'GOES IN'
       @jobs = YAML::Store.new 'resources/jobs.yml'
-      @jobs = @jobs.transaction { @jobs['jobs'] } 
+      @jobs_data = @jobs.transaction { @jobs['jobs'] } 
       $job_array.each do |item|
-        @job = @jobs[item]
+        @job = @jobs_data[item]
+        # if @job['retry_time'].nil? != true
+        #   current_time = Time.now
+        #   if current_time < @job['retry_time']
+        #     continue
+        #   end
+        # end
         puts 'GETTING JOB FROM QUEUE..'
         uri = URI.parse(@job['url'])
         response = Net::HTTP.post_form(uri, @job['job'])
-        puts 'WEBHOOK SENT SUCCESSFULLY'
-        # if response.body == 'ok'
-        #   puts 'WEBHOOK SENT SUCCESSFULLY'
-        #   @job['status'] = 'COMPLETED'
+        puts response
+        if response.body == 'ok'
+          puts 'WEBHOOK SENT SUCCESSFULLY'
+          @job['status'] = 'COMPLETED'
+          puts @job
 
-        #   @jobs.transaction do
-        #     @jobs['jobs'][item] = @job
-        #   end
-        # else
-        #   @job['status'] = 'FAILED, PENDING RE-TRY'
-
-        #   @jobs.transaction do
-        #     @jobs['jobs'][item] = @job
-        #   end
-        # end
+          @jobs.transaction do
+            puts @job
+            @jobs['jobs'][item] = @job
+          end
+        else
+          @job['status'] = 'FAILED, PENDING RE-TRY'
+          # time = Time.now
+          # retry_time = t + 30
+          # puts retry_time       
+          # @job['retry_time'] = retry_time
+          @jobs.transaction do
+            puts @job
+            @jobs['jobs'][item] = @job
+          end
+          # $job_flag = true
+          # $job_array.push(item)
+        end  
       end
   		sleep 0.12
       $job_flag = false
